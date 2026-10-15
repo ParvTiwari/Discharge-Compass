@@ -26,6 +26,13 @@ export default function Home() {
     const g = await r.json(); setFb({ ...fb, [i]: g }); setActive(q.sourceIds);
     if (!g.understood) setReview(rv => [...rv, { id: 'T' + i, reason: 'teachback', detail: 'Patient may not understand: ' + q.q, status: 'open' }]);
   }
+  const upload = async e => { const f = e.target.files[0]; if (!f) return; setText(await f.text()); setSid('custom'); setData(null); };
+  function ics() {
+    const ymd = d => d.toISOString().slice(0, 10).replace(/-/g, '');
+    const ev = (data.appointments || []).map((a, i) => { const m = /(\d+)\s*(day|week)/i.exec(a.when || ''); const d = new Date(); if (m) d.setDate(d.getDate() + (+m[1]) * (/week/i.test(m[2]) ? 7 : 1)); return `BEGIN:VEVENT\nUID:dc${i}@compass\nDTSTAMP:${ymd(new Date())}T000000Z\nDTSTART;VALUE=DATE:${ymd(d)}\nSUMMARY:${(a.what || 'Follow-up').replace(/[,;\n]/g, ' ')}\nEND:VEVENT`; });
+    const b = new Blob([`BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//DischargeCompass//EN\n${ev.join('\n')}\nEND:VCALENDAR`], { type: 'text/calendar' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'follow-ups.ics'; a.click();
+  }
   const speak = t => { const u = new SpeechSynthesisUtterance(t); u.lang = LANGS[lang]; speechSynthesis.cancel(); speechSynthesis.speak(u); };
   const ranges = data ? active.map(id => data.spans[id]).filter(Boolean) : [];
   const days = data ? [...new Set(data.plan.map(p => p.day))].sort() : [];
@@ -34,16 +41,18 @@ export default function Home() {
     <div className="ban">Prototype with synthetic data. Not medical advice. Tap any line to see the exact source sentence.</div>
     <main>
       <div className="bar">
-        <select value={sid} onChange={e => pick(e.target.value)}>{samples.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+        <select value={sid} onChange={e => pick(e.target.value)}>{samples.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}{sid === 'custom' && <option value="custom">Custom uploaded text</option>}</select>
         <select value={lang} onChange={e => { setLang(e.target.value); setData(null); }}>{Object.keys(LANGS).map(l => <option key={l}>{l}</option>)}</select>
         <button onClick={run} disabled={busy}>{busy ? 'Analyzing…' : 'Build my plan'}</button>
+        <label className="alt" style={{ padding: '8px 12px', border: '1px solid #0b6e6e', borderRadius: 8, cursor: 'pointer' }}>Upload .txt<input type="file" accept=".txt" onChange={upload} hidden /></label>
+        {data && data.appointments?.length > 0 && <button className="alt" onClick={ics}>Add follow-ups to calendar</button>}
         {data && <button className="alt" onClick={() => speak(data.plan.map(p => p.text).join('. '))}>Read aloud</button>}
       </div>
       {err && <div className="card item red">{err}</div>}
       {!data && <textarea value={text} onChange={e => setText(e.target.value)} />}
       {data && <div className="grid"><div>
         {data.flags.length > 0 && <div className="card"><h3>Medicine safety checks</h3>
-          {data.flags.map(f => <div key={f.id} className={'item ' + f.severity} onClick={() => setActive(f.sourceIds)}><span className="tag">{f.severity} · {f.kind}</span><br />{f.drugs.join(' + ')}: {f.explanation}</div>)}</div>}
+          {data.flags.map(f => <div key={f.id} className={'item ' + f.severity} onClick={() => setActive(f.sourceIds)}><span className="tag">{f.severity} · {f.kind}</span><br />{f.drugs.join(' + ')}: {f.explanation}{f.rxcui && <div style={{ fontSize: 13 }}>RxNorm IDs: {Object.entries(f.rxcui).map(([k, v]) => `${k} (${v})`).join(', ')}</div>}{f.fda && <div style={{ fontSize: 13, fontStyle: 'italic' }}>FDA label excerpt (openFDA): …{f.fda}…</div>}</div>)}</div>}
         <div className="card"><h3>Your plan: {data.diagnosis}</h3>
           {days.map(d => <div key={d}><div className="day">Day {d}</div>{data.plan.filter(p => p.day === d).map((p, i) => <div key={i} className="item" onClick={() => setActive(p.sourceIds)}>{p.text}</div>)}</div>)}</div>
         <div className="card"><h3>When to get help</h3>{data.guide.map((g, i) => <div key={i} className={'item ' + g.level} onClick={() => setActive(g.sourceIds)}><span className="tag">{g.level === 'red' ? 'Call 911' : 'Call the clinic'}</span><br />{g.text}</div>)}</div>

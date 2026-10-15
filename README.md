@@ -16,3 +16,10 @@ Interaction rules in `lib/safety.js` are ILLUSTRATIVE and need clinical validati
 
 ## Model note
 Groq retired its Llama models for free accounts. Default is `openai/gpt-oss-120b`; fallback `openai/gpt-oss-20b`. Free tier is limited to roughly 8,000 tokens/min, so wait ~1 minute between full runs or use the cache (DEMO_MODE).
+
+## Extras
+- RxNorm ID lookup and openFDA label excerpts enrich each safety flag (best effort, 4s timeout, silently skipped if offline).
+- `Upload .txt` for your own discharge text; `Add follow-ups to calendar` exports an .ics file.
+- `npm run eval` (with dev server running) prints grounding rate and planted-conflict recall for your slides.
+## Not included
+Photo/PDF OCR, SMS/push reminders, caregiver accounts, live ABHA/EHR integration (roadmap).
