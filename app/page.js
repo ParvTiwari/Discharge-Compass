@@ -76,17 +76,18 @@ export default function Home() {
   const held = data ? data.review.filter(r => r.detail.startsWith('Plan line dropped')).length : 0;
   const lv = l => data ? data.guide.filter(g => g.level === l) : [];
   return (<>
-    <nav className="nav"><div className="in"><a className="brand" href="#top"><Compass busy={busy} done={!!data && !busy} />Discharge Compass</a>
+    <nav className="nav"><div className="in"><a className="brand" href="#top"><Compass busy={busy} done={!!data && !busy} />Discharge Compass</a><span className="nav-signal"><i />Safety-first prototype</span>
       <div className="links"><a href="#features">Features</a><a href="#stack">Technical stack</a><a href="#review">Nurse review</a><a href="#demo">Live demo</a></div>
-      <a className="btn pri sm" href="#demo">Try Live Demo</a></div></nav>
+      <a className="btn pri sm" href="#demo">Launch demo <span aria-hidden="true">-&gt;</span></a></div></nav>
 
-    <header className="hero" id="top"><div>
-      <span className="eyebrow">Prototype · built with synthetic patients</span>
-      <h1>Clear, verified, post-hospital recovery plans in <em>plain language.</em></h1>
-      <p className="lead">Hospital discharge papers are dense and easy to misread. Discharge Compass rewrites them for patients and family caregivers, checks the medicines, and shows the exact sentence behind every line it says.</p>
-      <div className="cta"><a className="btn pri" href="#demo">Try Live Demo</a><a className="btn alt" href="#stack">View Technical Stack</a></div>
-      <div className="checks"><span><Tick />Plain language</span><span><Tick />Traced to the source</span><span><Tick />Reviewed by a nurse</span></div>
-    </div><Phone /></header>
+    <header className="hero" id="top"><div className="hero-copy">
+      <span className="eyebrow">DISCHARGE INTELLIGENCE / SYNTHETIC DEMO</span>
+      <h1>Recovery clarity,<br />the moment it <em>matters most.</em></h1>
+      <p className="lead">Discharge Compass turns dense hospital instructions into a recovery plan people can follow - with every action traced to the original document and risky medicines surfaced before the first dose.</p>
+      <div className="cta"><a className="btn pri" href="#demo">See it in action <span aria-hidden="true">-&gt;</span></a><a className="btn alt" href="#features">How we earn trust</a></div>
+      <div className="hero-flow" aria-label="How Discharge Compass works"><div><b>01</b><span>Read the<br />discharge note</span></div><i /><div><b>02</b><span>Verify every<br />instruction</span></div><i /><div><b>03</b><span>Guide recovery<br />with confidence</span></div></div>
+      <div className="checks"><span><Tick />Plain language</span><span><Tick />Source verified</span><span><Tick />Nurse-ready</span></div>
+    </div><div className="hero-visual"><span className="float-card fc-one"><i className="pulse" /> 100% source-linked</span><span className="float-card fc-two"><b>!</b> 2 risks caught</span><Phone /></div></header>
 
     <section className="strip"><div className="sec"><div className="cols">
       <div className="met" style={{ '--c': '#EF4444' }}><b>1 in 5</b><p>Medicare patients were rehospitalized within 30 days in a landmark study. Confusing instructions and medicine errors are among the avoidable causes.</p><small>Jencks et al., New England Journal of Medicine, 2009</small></div>
