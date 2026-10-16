@@ -3,9 +3,26 @@ Verified, plain-language, multilingual discharge plans. Synthetic data only. Not
 
 ## Run
 1. `npm install`
-2. `cp .env.example .env.local` and add your `GROQ_API_KEY`
+2. Copy `.env.example` to `.env.local` and add your `GROQ_API_KEY`
 3. `npm run dev` then open http://localhost:3000
 4. Deploy: push to GitHub, import into Vercel, add the same env vars.
+
+## Verify before deployment
+
+Run these commands from the project root:
+
+```bash
+npm test
+npm run build
+```
+
+`npm test` covers source-quote matching, the seeded safety-conflict rules, and API input validation. `npm run eval` additionally exercises the two synthetic patient scenarios against a running local server; it requires a Groq key or warmed demo cache.
+
+## API limits
+
+The API accepts only English, Spanish, or Hindi and caps a submitted text summary at 50,000 characters. This is a demo protection against accidental oversized submissions, not a substitute for authentication or clinical privacy controls.
+
+Only the bundled synthetic samples may be cached for demo mode. Uploaded summaries are never written to `data/cache`.
 
 ## Demo safety net
 Each successful run caches to `data/cache/`. Run both samples in all 3 languages once, then set `DEMO_MODE=true` to serve cached results with no network. (On Vercel the cache is not writable, so warm it locally, remove `data/cache` from .gitignore and commit it.)

@@ -1,10 +1,15 @@
 import { analyze } from '../../../lib/pipeline';
 import samples from '../../../data/samples.json';
+import { validateAnalysisRequest } from '../../../lib/validation';
 export const maxDuration = 60;
 export async function POST(req) {
   try {
-    const { sampleId, text, lang } = await req.json();
+    const { sampleId, text, lang } = validateAnalysisRequest(await req.json());
     const sample = samples.find(s => s.id === sampleId) || { id: 'custom', allergies: [], homeMeds: [] };
-    return Response.json(await analyze({ sample, text: text || sample.summary, lang: lang || 'English' }));
-  } catch (e) { console.error('ANALYZE ERROR:', e); return Response.json({ error: 'Analysis failed: ' + e.message }, { status: 500 }); }
+    return Response.json(await analyze({ sample, text: text || sample.summary, lang }));
+  } catch (e) {
+    const status = e.status || 500;
+    if (status === 500) console.error('ANALYZE ERROR:', e);
+    return Response.json({ error: status === 400 ? e.message : 'Analysis failed: ' + e.message }, { status });
+  }
 }
