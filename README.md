@@ -24,6 +24,10 @@ The API accepts only English, Spanish, or Hindi and caps a submitted text summar
 
 Only the bundled synthetic samples may be cached for demo mode. Uploaded summaries are never written to `data/cache`.
 
+## Medication evidence
+
+Medication names are normalized through RxNorm and the prototype can retrieve current `drug_interactions` excerpts from official openFDA Structured Product Labels. The screen labels whether a particular safety alert received a live label match; an unmatched screening alert remains in clinician review. These public sources support the demo but are not a clinically validated interaction database and must not be used for medical decisions without clinical oversight.
+
 ## Demo safety net
 Each successful run caches to `data/cache/`. Run both samples in all 3 languages once, then set `DEMO_MODE=true` to serve cached results with no network. (On Vercel the cache is not writable, so warm it locally, remove `data/cache` from .gitignore and commit it.)
 

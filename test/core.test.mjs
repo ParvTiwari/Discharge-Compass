@@ -16,6 +16,7 @@ test('safety detects planted interaction, allergy, and duplicate risks', () => {
   assert.ok(flags.some(flag => flag.kind === 'interaction' && flag.drugs.includes('warfarin') && flag.drugs.includes('ibuprofen')));
   assert.ok(flags.some(flag => flag.kind === 'allergy' && flag.drugs.includes('amoxicillin')));
   assert.ok(flags.some(flag => flag.kind === 'duplicate' && flag.drugs.includes('albuterol') && flag.drugs.includes('levalbuterol')));
+  assert.ok(flags.every(flag => /Ask the nurse or pharmacist before taking/.test(flag.patientExplanation)));
 });
 
 test('analysis request validation accepts supported input and rejects unsafe input', () => {

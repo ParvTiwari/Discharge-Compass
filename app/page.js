@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import samples from '../data/samples.json';
 const LANGS = { English: 'en-US', Spanish: 'es-ES', Hindi: 'hi-IN' };
 const TYPES = { med: 'Medicine', appointment: 'Visit', diet: 'Food and drink', activity: 'Activity', monitor: 'Check' };
@@ -38,11 +38,17 @@ const RQ = [{ c: '#EF4444', k: 'Allergy', t: 'Amoxicillin prescribed; patient is
   { c: '#EF4444', k: 'Interaction', t: 'Warfarin with ibuprofen raises bleeding risk', q: 'START ibuprofen 400 mg PO q8h PRN for knee pain' },
   { c: '#EAB308', k: 'Teach-back', t: 'Patient was unsure when to call 911', q: 'Call 911 for chest pain or syncope' },
   { c: '#EAB308', k: 'Held back', t: 'Plan line without a source sentence', q: 'No matching sentence found' }];
+const caregiverCopy = text => {
+  const t = (text || '').replace(/\.$/, '');
+  return `Your family member needs to ${t.charAt(0).toLowerCase()}${t.slice(1)}.`;
+};
 export default function Home() {
   const [sid, setSid] = useState('A'), [lang, setLang] = useState('English'), [text, setText] = useState(samples[0].summary);
   const [data, setData] = useState(null), [busy, setBusy] = useState(false), [err, setErr] = useState('');
   const [active, setActive] = useState([]), [review, setReview] = useState([]), [ans, setAns] = useState({}), [fb, setFb] = useState({}), [stage, setStage] = useState(0);
   const [g1, setG1] = useState(true), [rqDone, setRqDone] = useState([]);
+  const [caregiver, setCaregiver] = useState(false), [listening, setListening] = useState(false), [voiceError, setVoiceError] = useState('');
+  const recognition = useRef(null);
   useEffect(() => { if (!busy) { setStage(0); return; } const t = setInterval(() => setStage(s => Math.min(s + 1, STAGES.length - 1)), 1700); return () => clearInterval(t); }, [busy]);
   useEffect(() => { document.querySelector('.doc mark')?.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, [active]);
   const pick = id => { setSid(id); setText(samples.find(s => s.id === id).summary); setData(null); };
@@ -60,6 +66,22 @@ export default function Home() {
     if (!g.understood) setReview(rv => [...rv, { id: 'T' + i, reason: 'teach-back', detail: 'Patient may not understand: ' + q.q, status: 'open' }]);
   }
   const upload = async e => { const f = e.target.files[0]; if (!f) return; setText(await f.text()); setSid('custom'); setData(null); };
+  function stopVoice() { recognition.current?.stop(); }
+  function startVoice() {
+    setVoiceError('');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) { setVoiceError('Voice input is not supported in this browser. Try Chrome or Edge.'); return; }
+    const r = new SpeechRecognition(); recognition.current = r;
+    r.lang = LANGS[lang]; r.continuous = false; r.interimResults = true;
+    r.onstart = () => setListening(true);
+    r.onend = () => setListening(false);
+    r.onerror = e => { setListening(false); setVoiceError(e.error === 'not-allowed' ? 'Microphone permission was not granted.' : 'Voice input could not be completed. Please try again.'); };
+    r.onresult = e => {
+      const words = Array.from(e.results).map(x => x[0].transcript).join(' ');
+      setText(prev => `${prev}${prev.trim() ? '\n' : ''}${words}`); setSid('custom'); setData(null);
+    };
+    r.start();
+  }
   function ics() {
     const ymd = d => d.toISOString().slice(0, 10).replace(/-/g, '');
     const ev = (data.appointments || []).map((a, i) => { const m = /(\d+)\s*(day|week)/i.exec(a.when || ''); const d = new Date(); if (m) d.setDate(d.getDate() + (+m[1]) * (/week/i.test(m[2]) ? 7 : 1)); return `BEGIN:VEVENT\nUID:dc${i}@compass\nDTSTAMP:${ymd(new Date())}T000000Z\nDTSTART;VALUE=DATE:${ymd(d)}\nSUMMARY:${(a.what || 'Follow-up').replace(/[,;\n]/g, ' ')}\nEND:VEVENT`; });
@@ -75,6 +97,11 @@ export default function Home() {
   const open = review.filter(r => r.status === 'open').length;
   const held = data ? data.review.filter(r => r.detail.startsWith('Plan line dropped')).length : 0;
   const lv = l => data ? data.guide.filter(g => g.level === l) : [];
+  const displayPlan = p => caregiver ? caregiverCopy(p.text) : p.text;
+  const sharePlan = () => {
+    const plan = data.plan.map(p => `- ${displayPlan(p)}`).join('\n');
+    window.open(`https://wa.me/?text=${encodeURIComponent(`Discharge Compass recovery plan\n\n${plan}\n\nPlease check the original discharge instructions and contact the care team for medical questions.`)}`, '_blank', 'noopener,noreferrer');
+  };
   return (<>
     <nav className="nav"><div className="in"><a className="brand" href="#top"><Compass busy={busy} done={!!data && !busy} />Discharge Compass</a><span className="nav-signal"><i />Safety-first prototype</span>
       <div className="links"><a href="#features">Features</a><a href="#stack">Technical stack</a><a href="#review">Nurse review</a><a href="#demo">Live demo</a></div>
@@ -133,7 +160,9 @@ export default function Home() {
         <span className="lab">Whose discharge summary?</span><div className="seg">{samples.map(s => <button key={s.id} aria-pressed={sid === s.id} onClick={() => pick(s.id)}>{({ A: 'Heart failure', B: 'Pneumonia + COPD' })[s.id] || s.id}</button>)}</div>
         <span className="lab">Language for the patient</span><div className="seg">{Object.keys(LANGS).map(l => <button key={l} aria-pressed={lang === l} onClick={() => { setLang(l); setData(null); }}>{l}</button>)}</div>
         <div className="row"><button className="btn pri" onClick={() => run()} disabled={busy}>{busy ? 'Working…' : 'Build the recovery plan'}</button>
-          <label className="btn alt" style={{ cursor: 'pointer' }}>Use your own .txt<input type="file" accept=".txt" onChange={upload} hidden /></label></div>
+          <label className="btn alt" style={{ cursor: 'pointer' }}>Use your own .txt<input type="file" accept=".txt" onChange={upload} hidden /></label>
+          <button className={'btn alt voice-btn' + (listening ? ' listening' : '')} onClick={listening ? stopVoice : startVoice} type="button" aria-pressed={listening}>{listening ? 'Listening - tap to stop' : 'Speak instructions'}</button></div>
+        <p className="voice-note">Voice input stays in this browser until you build the plan. Review the text before continuing.</p>{voiceError && <div className="voice-error" role="alert">{voiceError}</div>}
         {busy && <p className="stage" aria-live="polite">{STAGES[stage]}</p>}
       </div><div className="paper"><h3>The hospital's discharge summary</h3><textarea aria-label="Discharge summary text" value={text} onChange={e => setText(e.target.value)} /></div></div>}
       {data && <>
@@ -143,19 +172,21 @@ export default function Home() {
           <Kpi n={open} c="#EAB308">items waiting for a nurse instead of a full re-explanation</Kpi></div>
         <div className="row" style={{ marginTop: 0, marginBottom: 26, alignItems: 'center' }}>
           <button className="btn alt sm" onClick={() => { setData(null); setActive([]); }}>Start over</button>
-          <button className="btn alt sm" onClick={() => speak(data.plan.map(p => p.text).join('. '))}>Read the plan aloud</button>
+          <button className="btn alt sm" onClick={() => speak(data.plan.map(displayPlan).join('. '))}>Read the plan aloud</button>
           {data.appointments?.length > 0 && <button className="btn alt sm" onClick={ics}>Add follow-ups to my calendar</button>}
           <div className="seg" style={{ margin: 0 }}>{Object.keys(LANGS).map(l => <button key={l} aria-pressed={lang === l} onClick={() => { setLang(l); run(l); }}>{l}</button>)}</div></div>
+        <div className="caregiver-bar"><div><span className="care-icon">&#9829;</span><div><b>Caregiver mode</b><small>Rewrite the plan for the person helping at home.</small></div></div><div className="care-actions"><button className={'mode-switch' + (caregiver ? ' on' : '')} onClick={() => setCaregiver(!caregiver)} role="switch" aria-checked={caregiver}><i /></button>{caregiver && <button className="btn pri sm" onClick={sharePlan}>Share on WhatsApp</button>}</div></div>
         <div className="main"><div>
           {data.flags.length > 0 && <><h3 className="h">Ask your nurse before taking these</h3>
             {data.flags.map(f => <button key={f.id} className={'alert ' + f.severity} aria-pressed={key(active) === key(f.sourceIds)} onClick={() => setActive(f.sourceIds)}><span className="ico"><Warn /></span><div>
-              <div className="pills" style={{ margin: '0 0 6px' }}>{f.drugs.map(d => <span className="pill" key={d}>{d}</span>)}</div>{f.explanation}
+              <div className="pills" style={{ margin: '0 0 6px' }}>{f.drugs.map(d => <span className="pill" key={d}>{d}</span>)}</div>{f.patientExplanation || f.explanation}
               {f.rxcui && <div className="rx">RxNorm: {Object.entries(f.rxcui).map(([k, v]) => `${k} ${v}`).join(', ')}</div>}
+              {f.drugIntelligence && <div className={'drug-intel ' + (f.drugIntelligence.labelEvidence ? 'live' : '')}><b>{f.drugIntelligence.labelEvidence ? 'LIVE LABEL EVIDENCE' : 'SAFETY SCREEN'}</b><span>{f.drugIntelligence.labelEvidence ? 'RxNorm-normalized medicine names matched against official FDA labeling.' : 'No matching label excerpt returned. Keep this item in clinician review.'}</span></div>}
               {f.fda && <div className="fda">From the FDA label: …{f.fda}…</div>}</div></button>)}</>}
           <h3 className="h">Your plan for {data.diagnosis}</h3>
           {days.map(d => <div className="day" key={d}><span className="dn">Day {d}</span><div className="items">
             {data.plan.filter(p => p.day === d).map((p, i) => { const on = key(active) === key(p.sourceIds); return (
-              <button key={i} className={'step t-' + p.type} aria-pressed={on} onClick={() => setActive(on ? [] : p.sourceIds)}><span className="tag">{TYPES[p.type] || 'Step'}</span>{p.text}
+              <button key={i} className={'step t-' + p.type} aria-pressed={on} onClick={() => setActive(on ? [] : p.sourceIds)}><span className="tag">{TYPES[p.type] || 'Step'}</span>{displayPlan(p)}
                 {on && quotes(p.sourceIds).map((q, j) => <div className="src" key={j}><small>From your document</small>“{q}”</div>)}</button>); })}</div></div>)}
           <h3 className="h">When to get help</h3>
           <div className="lights"><div className="light g"><h5>Green: on track</h5><div>If none of the signs in the amber and red cards apply, keep following your plan.</div></div>
