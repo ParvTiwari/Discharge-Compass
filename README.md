@@ -38,5 +38,20 @@ Groq retired its Llama models for free accounts. Default is `openai/gpt-oss-120b
 - RxNorm ID lookup and openFDA label excerpts enrich each safety flag (best effort, 4s timeout, silently skipped if offline).
 - `Upload .txt` for your own discharge text; `Add follow-ups to calendar` exports an .ics file.
 - `npm run eval` (with dev server running) prints grounding rate and planted-conflict recall for your slides.
+## Scan paper slips (OCR)
+`Scan a paper slip` takes a photo (or camera capture on a phone) and turns it into editable text.
+- **Default: on-device.** Tesseract.js runs in the browser using files copied to `public/tesseract` by `npm install` (postinstall), so it works offline and the photo never leaves the device. Best for printed or clearly typed slips. English only.
+- **Handwriting: Google Vision.** Set `GOOGLE_VISION_API_KEY` in `.env.local`. The photo is then sent to Google Cloud Vision (DOCUMENT_TEXT_DETECTION) through `/api/ocr`; if that call fails the app falls back to on-device reading.
+- OCR can misread doses (for example `q8h` as `g8h`). The UI shows OCR confidence and asks the user to check the text before building a plan. For a scanned slip you can also type allergies and home medicines so the safety check has the full picture.
+
+## Confidence on every plan line
+Each plan and guide line gets High, Medium or Low. The model rates itself, then deterministic checks cap it: any number in the line that is not in the cited source sentence forces Low (works in English, Spanish and Hindi digits), and very short sources are penalised. Low lines are shown with a dashed border, marked "Waiting for a nurse", and queued on the nurse desk (reason `low-confidence`). When the nurse approves, the line shows "Checked by a nurse".
+
+## Readmission risk score
+`lib/risk.js` adds transparent points: serious medicine alerts waiting for a nurse (+15 each, max 30), cautions (+6 each, max 12), new or changed medicines (+3 each, max 15), five or more medicines (+8), low-confidence lines (+4 each, max 12), missed teach-back answers (+8 each, max 24), held-back lines (+2 each, max 6), on a base of 10. Levels: Low under 35, Moderate 35 to 59, High 60 and above. It recalculates live as the nurse approves items and as teach-back answers are missed. **It is a prototype heuristic, not a validated clinical score** (it is not LACE or HOSPITAL).
+
+## Tests
+`npm test` runs 12 unit tests (quote matching, safety rules, validation, confidence, risk, OCR request validation). The browser flows (photo to OCR to plan to nurse approval) were verified end to end with Playwright against a mocked model.
+
 ## Not included
-Photo/PDF OCR, SMS/push reminders, caregiver accounts, live ABHA/EHR integration (roadmap).
+SMS/push reminders, caregiver accounts, live ABHA/EHR integration, Hindi OCR, voice answers (roadmap).

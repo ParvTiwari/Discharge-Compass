@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import samples from '../data/samples.json';
+import { riskScore, RISK_NOTE } from '../lib/risk.js';
 const LANGS = { English: 'en-US', Spanish: 'es-ES', Hindi: 'hi-IN' };
 const TYPES = { med: 'Medicine', appointment: 'Visit', diet: 'Food and drink', activity: 'Activity', monitor: 'Check' };
 const STAGES = ['Reading the discharge summary…', 'Pulling out every medicine and appointment…', 'Checking each line against the document…', 'Screening the medicines for conflicts…', 'Writing the plan in plain language…'];
@@ -9,6 +10,8 @@ const nice = d => {
   if (d.startsWith('Plan line dropped')) return 'Held back, no source sentence: ' + d.replace(/^Plan line dropped \(no valid source\): /, '');
   return d;
 };
+const CF = { high: 'High confidence', medium: 'Medium confidence', low: 'Low confidence' };
+const splitList = s => s.split(',').map(x => x.trim()).filter(Boolean);
 function useCount(n) { const [v, setV] = useState(0); useEffect(() => { let i = 0; const t = setInterval(() => { i++; setV(Math.round(n * Math.min(i / 22, 1))); if (i >= 22) clearInterval(t); }, 30); return () => clearInterval(t); }, [n]); return v; }
 function Kpi({ n, c, children }) { const v = useCount(n); return <div className="kpi" style={{ '--c': c }}><b>{v}</b><span>{children}</span></div>; }
 const Tick = () => <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="#0D9488" /><path d="m7 12.5 3.2 3.2L17 9" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>;
@@ -43,13 +46,41 @@ export default function Home() {
   const [data, setData] = useState(null), [busy, setBusy] = useState(false), [err, setErr] = useState('');
   const [active, setActive] = useState([]), [review, setReview] = useState([]), [ans, setAns] = useState({}), [fb, setFb] = useState({}), [stage, setStage] = useState(0);
   const [g1, setG1] = useState(true), [rqDone, setRqDone] = useState([]);
+  const [vision, setVision] = useState(false), [scanSt, setScanSt] = useState(null), [prof, setProf] = useState({ allergies: '', homeMeds: '' });
+  useEffect(() => { fetch('/api/ocr').then(r => r.json()).then(j => setVision(!!j.vision)).catch(() => {}); }, []);
+  const shrink = file => new Promise((res, rej) => {
+    const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => { const s = Math.min(1, 1800 / Math.max(img.width, img.height)), c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(u); res(c.toDataURL('image/jpeg', 0.85)); };
+    img.onerror = () => rej(new Error('That file could not be read as an image.')); img.src = u;
+  });
+  async function scan(e) {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    setErr(''); setScanSt({ busy: true, pct: 0, label: 'Preparing the photo…' });
+    try {
+      const url = await shrink(f); let out = null;
+      if (vision) {
+        setScanSt({ busy: true, pct: 0, label: 'Reading the photo with Google Vision…' });
+        const r = await fetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: url }) }); const j = await r.json();
+        if (r.ok) out = j; else setErr(j.error + ' Switching to on-device reading.');
+      }
+      if (!out) {
+        const { createWorker } = await import('tesseract.js');
+        const w = await createWorker('eng', 1, { workerPath: '/tesseract/worker.min.js', corePath: '/tesseract/core', langPath: '/tesseract/lang', logger: m => { if (m.status === 'recognizing text') setScanSt({ busy: true, pct: Math.round(m.progress * 100), label: 'Reading the photo on this device…' }); } });
+        const { data: d } = await w.recognize(url); await w.terminate();
+        out = { engine: 'tesseract', text: d.text.trim(), confidence: Math.round(d.confidence) };
+      }
+      if (!out.text) throw new Error('No text was found. Try a clearer, well-lit photo.');
+      setText(out.text); setSid('custom'); setData(null); setScanSt({ busy: false, engine: out.engine, conf: out.confidence });
+    } catch (x) { setScanSt(null); setErr(x.message); }
+  }
   useEffect(() => { if (!busy) { setStage(0); return; } const t = setInterval(() => setStage(s => Math.min(s + 1, STAGES.length - 1)), 1700); return () => clearInterval(t); }, [busy]);
   useEffect(() => { document.querySelector('.doc mark')?.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, [active]);
   const pick = id => { setSid(id); setText(samples.find(s => s.id === id).summary); setData(null); };
   async function run(L = lang) {
     setBusy(true); setErr(''); setActive([]);
     try {
-      const r = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sampleId: sid, text, lang: L }) });
+      const r = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sampleId: sid, text, lang: L, ...(sid === 'custom' ? { profile: { allergies: splitList(prof.allergies), homeMeds: splitList(prof.homeMeds) } } : {}) }) });
       const d = await r.json(); if (d.error) throw new Error(d.error);
       setData(d); setReview(d.review);
     } catch (e) { setErr(e.message); } setBusy(false);
@@ -74,6 +105,10 @@ export default function Home() {
   const high = data ? data.flags.filter(f => f.severity === 'high').length : 0;
   const open = review.filter(r => r.status === 'open').length;
   const held = data ? data.review.filter(r => r.detail.startsWith('Plan line dropped')).length : 0;
+  const stats = data?.stats || {};
+  const riskStart = data ? riskScore({ flags: data.flags, stats, review: data.review }) : null;
+  const riskNow = data ? riskScore({ flags: data.flags, stats, review }) : null;
+  const riskIfApproved = data ? riskScore({ flags: data.flags, stats, review: review.map(r => r.reason === 'safety' ? { ...r, status: 'approved' } : r) }) : null;
   const lv = l => data ? data.guide.filter(g => g.level === l) : [];
   return (<>
     <nav className="nav"><div className="in"><a className="brand" href="#top"><Compass busy={busy} done={!!data && !busy} />Discharge Compass</a><span className="nav-signal"><i />Safety-first prototype</span>
@@ -95,7 +130,7 @@ export default function Home() {
       <div className="met" style={{ '--c': '#EAB308' }}><b>3</b><p>languages at launch: English, Spanish and Hindi, with the plan read aloud for people who prefer to listen.</p><small>More languages are on the roadmap</small></div>
     </div></div></section>
 
-    <section className="sec" id="features"><span className="eyebrow">What makes it different</span><h2>Four ways it earns a family's trust</h2><p className="sub">Each feature below is part of the working prototype, except where it says roadmap.</p>
+    <section className="sec" id="features"><span className="eyebrow">What makes it different</span><h2>Seven ways it earns a family's trust</h2><p className="sub">Each feature below is part of the working prototype, except where it says roadmap.</p>
       <div className="bento">
         <div className="bc b7"><span className="tagc">Source-grounded output</span><h3>Every line points back to the doctor's own words</h3><p>Tap a plan sentence and the original sentence lights up. If the system can't find the source, it doesn't show the line.</p>
           <div className="tie"><div className="bubble mono">…weigh daily each morning.<br /><mark style={{ opacity: g1 ? 1 : .25 }}>CONTINUE warfarin 5 mg PO daily</mark>; INR check in 3 days…</div><div className="arrow" aria-hidden="true">←</div>
@@ -110,6 +145,13 @@ export default function Home() {
           <div className="tl"><div className="tr g"><i /><div><b>Green: keep going</b><span>No warning signs from your document. Follow the plan.</span></div></div>
             <div className="tr y"><i /><div><b>Amber: call the clinic</b><span>Signs your document says to report, like a fast weight gain.</span></div></div>
             <div className="tr r"><i /><div><b>Red: call 911</b><span>Emergency signs from your document, like chest pain.</span></div></div></div></div>
+        <div className="bc b4"><span className="tagc">Scan paper slips</span><h3>Photo in, plan out</h3><div className="slip" aria-hidden="true" />
+          <p>Snap a picture of a paper discharge slip. Printed text is read on the device, even offline. Handwriting uses Google Vision when you set it up.</p></div>
+        <div className="bc b4"><span className="tagc">Confidence on every line</span><h3>Honest about what it is unsure of</h3>
+          <div className="cfrow"><span className="cf high">High</span><span>Take warfarin 5 mg every day.</span></div><div className="cfrow"><span className="cf medium">Medium</span><span>Rest and walk short distances.</span></div><div className="cfrow"><span className="cf low">Low</span><span>A number that is not in the source. Sent to the nurse.</span></div></div>
+        <div className="bc b4"><span className="tagc">Readmission risk</span><h3>From flags to the outcome that matters</h3>
+          <div className="gauge" aria-hidden="true"><span className="mk" style={{ left: '57%' }} /></div>
+          <p>Adds up serious medicine alerts, new medicines and missed teach-back answers. It falls live as the nurse resolves items. A transparent prototype score, not a validated clinical one.</p></div>
       </div></section>
 
     <section className="strip" id="stack"><div className="sec"><span className="eyebrow">For clinicians and engineers</span><h2>Technical stack blueprint</h2><p className="sub">What is built today, and what is still on the roadmap.</p>
@@ -117,6 +159,8 @@ export default function Home() {
         <tr><td>Frontend</td><td>Next.js and React web app, Web Speech read-aloud</td><td>Responsive, large-text patient and caregiver interface</td><td><span className="st b">Built</span></td></tr>
         <tr><td>Extraction</td><td>LLM through the Groq API (openai/gpt-oss-120b)</td><td>Pulls medicines, visits and warning signs into JSON with verbatim quotes</td><td><span className="st b">Built</span></td></tr>
         <tr><td>Verification</td><td>Quote-grounding check, medicine rules, RxNorm and openFDA lookups</td><td>Drops unverifiable lines; flags interactions, allergies and duplicates</td><td><span className="st b">Built</span></td></tr>
+        <tr><td>Paper intake</td><td>Tesseract.js in the browser (offline); optional Google Vision API</td><td>Turns a photo of a paper slip into editable text; handwriting needs Vision</td><td><span className="st b">Built</span></td></tr>
+        <tr><td>Confidence and risk</td><td>Model self-rating plus rule checks; additive risk heuristic</td><td>Badges every line, routes Low to the nurse, updates a live risk score</td><td><span className="st b">Built</span></td></tr>
         <tr><td>Data and privacy</td><td>Stateless API routes, nothing stored</td><td>No patient data is kept by the prototype</td><td><span className="st b">Built</span></td></tr>
         <tr><td>Backend storage</td><td>Encrypted, session-only PostgreSQL</td><td>Optional short-lived storage for care teams</td><td><span className="st p">Roadmap</span></td></tr>
         <tr><td>Interoperability</td><td>FHIR mapping, EHR integration</td><td>Send plans and flags into hospital systems</td><td><span className="st p">Roadmap</span></td></tr>
@@ -133,7 +177,12 @@ export default function Home() {
         <span className="lab">Whose discharge summary?</span><div className="seg">{samples.map(s => <button key={s.id} aria-pressed={sid === s.id} onClick={() => pick(s.id)}>{({ A: 'Heart failure', B: 'Pneumonia + COPD' })[s.id] || s.id}</button>)}</div>
         <span className="lab">Language for the patient</span><div className="seg">{Object.keys(LANGS).map(l => <button key={l} aria-pressed={lang === l} onClick={() => { setLang(l); setData(null); }}>{l}</button>)}</div>
         <div className="row"><button className="btn pri" onClick={() => run()} disabled={busy}>{busy ? 'Working…' : 'Build the recovery plan'}</button>
+          <label className="btn alt" style={{ cursor: 'pointer' }}>Scan a paper slip<input type="file" accept="image/*" capture="environment" aria-label="Scan a paper discharge slip" onChange={scan} hidden /></label>
           <label className="btn alt" style={{ cursor: 'pointer' }}>Use your own .txt<input type="file" accept=".txt" onChange={upload} hidden /></label></div>
+        {scanSt?.busy && <div className="sn" aria-live="polite">{scanSt.label}<div className="pbar"><i style={{ width: Math.max(4, scanSt.pct) + '%' }} /></div></div>}
+        {scanSt && !scanSt.busy && <div className={'sn' + (scanSt.engine === 'tesseract' || (scanSt.conf ?? 100) < 75 ? ' warn' : '')}>Read with <b>{scanSt.engine === 'google-vision' ? 'Google Vision' : 'on-device OCR'}</b>{scanSt.conf != null ? ` (${scanSt.conf}% confident)` : ''}. Check the text on the right and fix any mistakes before building the plan.{scanSt.engine === 'tesseract' ? ' On-device reading is best for printed slips. For handwriting, set up Google Vision (see the README).' : ''}</div>}
+        {sid === 'custom' && <div className="prof"><span className="lab">Allergies on the patient's chart (optional, comma-separated)</span><input value={prof.allergies} onChange={e => setProf({ ...prof, allergies: e.target.value })} placeholder="penicillin, sulfa" />
+          <span className="lab">Medicines already at home (optional, comma-separated)</span><input value={prof.homeMeds} onChange={e => setProf({ ...prof, homeMeds: e.target.value })} placeholder="warfarin 5 mg daily, furosemide 40 mg" /></div>}
         {busy && <p className="stage" aria-live="polite">{STAGES[stage]}</p>}
       </div><div className="paper"><h3>The hospital's discharge summary</h3><textarea aria-label="Discharge summary text" value={text} onChange={e => setText(e.target.value)} /></div></div>}
       {data && <>
@@ -141,6 +190,15 @@ export default function Home() {
           <Kpi n={data.plan.length} c="#22C55E">plan lines, each tied to a sentence in the patient's own document{held > 0 ? `. ${held} unverified ${held === 1 ? 'line was' : 'lines were'} held back.` : ''}</Kpi>
           <Kpi n={high} c="#EF4444">serious medicine problems caught before the first dose</Kpi>
           <Kpi n={open} c="#EAB308">items waiting for a nurse instead of a full re-explanation</Kpi></div>
+        <section className="risk" aria-live="polite" aria-label="Readmission risk"><div>
+          <span className="rk-lab">Readmission risk · prototype score</span>
+          <div className="rk-row"><b className={'rk-num ' + riskNow.level.toLowerCase()}>{riskNow.score}<small>/100</small></b><span className={'cf ' + ({ Low: 'high', Moderate: 'medium', High: 'low' })[riskNow.level]}>{riskNow.level} risk</span></div>
+          <div className="gauge"><span className="mk" style={{ left: riskNow.score + '%' }} /></div><div className="ticks"><span>0 Low</span><span>35 Moderate</span><span>60 High</span><span>100</span></div>
+          {riskStart.score !== riskNow.score && <p className="rk-delta">Started at <b>{riskStart.score}</b>. Now <b>{riskNow.score}</b> after nurse review and teach-back.</p>}
+          {riskIfApproved.score < riskNow.score && <p className="rk-hint">If the nurse resolves the open medicine alerts, this drops to <b>{riskIfApproved.score}</b>.</p>}
+          <p className="rk-note">{RISK_NOTE} It adds up transparent points and never replaces a clinician's judgment.</p></div>
+          <div><span className="rk-lab">What is driving it</span><ul className="rkl"><li><span>Starting point</span><b>+{riskNow.base}</b></li>
+            {riskNow.factors.map(f => <li key={f.label}><span>{f.label}{f.count > 1 ? ` (${f.count})` : ''}</span><b>+{f.points}</b></li>)}</ul></div></section>
         <div className="row" style={{ marginTop: 0, marginBottom: 26, alignItems: 'center' }}>
           <button className="btn alt sm" onClick={() => { setData(null); setActive([]); }}>Start over</button>
           <button className="btn alt sm" onClick={() => speak(data.plan.map(p => p.text).join('. '))}>Read the plan aloud</button>
@@ -153,14 +211,17 @@ export default function Home() {
               {f.rxcui && <div className="rx">RxNorm: {Object.entries(f.rxcui).map(([k, v]) => `${k} ${v}`).join(', ')}</div>}
               {f.fda && <div className="fda">From the FDA label: …{f.fda}…</div>}</div></button>)}</>}
           <h3 className="h">Your plan for {data.diagnosis}</h3>
+          {data.confidence && <p className="legend">Confidence on each line: <b>{data.confidence.high} high</b>, <b>{data.confidence.medium} medium</b>, <b>{data.confidence.low} low</b>. Low lines go to the nurse before the family relies on them.</p>}
           {days.map(d => <div className="day" key={d}><span className="dn">Day {d}</span><div className="items">
-            {data.plan.filter(p => p.day === d).map((p, i) => { const on = key(active) === key(p.sourceIds); return (
-              <button key={i} className={'step t-' + p.type} aria-pressed={on} onClick={() => setActive(on ? [] : p.sourceIds)}><span className="tag">{TYPES[p.type] || 'Step'}</span>{p.text}
-                {on && quotes(p.sourceIds).map((q, j) => <div className="src" key={j}><small>From your document</small>“{q}”</div>)}</button>); })}</div></div>)}
+            {data.plan.filter(p => p.day === d).map((p, i) => { const on = key(active) === key(p.sourceIds); const c = p.conf; const rv = c && review.find(r => r.ref === p.id); const ck = rv && rv.status !== 'open'; return (
+              <button key={i} className={'step t-' + p.type + (c?.level === 'low' && !ck ? ' lowc' : '')} aria-pressed={on} onClick={() => setActive(on ? [] : p.sourceIds)}><span className="tag">{TYPES[p.type] || 'Step'}</span>{p.text}
+                {c && <span className="cfw">{ck ? <span className="cf checked">Checked by a nurse</span> : <span className={'cf ' + c.level}>{CF[c.level]}</span>}{c.level === 'low' && !ck && <span className="wait">Waiting for a nurse</span>}</span>}
+                {on && quotes(p.sourceIds).map((q, j) => <div className="src" key={j}><small>From your document</small>“{q}”</div>)}
+                {on && c && c.level !== 'high' && c.reasons.length > 0 && <div className="why">Why {c.level}: {c.reasons.join('; ')}.</div>}</button>); })}</div></div>)}
           <h3 className="h">When to get help</h3>
           <div className="lights"><div className="light g"><h5>Green: on track</h5><div>If none of the signs in the amber and red cards apply, keep following your plan.</div></div>
             {['y', 'r'].map(k => <div key={k} className={'light ' + k}><h5>{k === 'r' ? 'Red: call 911' : 'Amber: call the clinic'}</h5>
-              {lv(k === 'r' ? 'red' : 'amber').map((g, i) => <div className="clk" key={i} onClick={() => setActive(g.sourceIds)}>{g.text}</div>)}
+              {lv(k === 'r' ? 'red' : 'amber').map((g, i) => <div className="clk" key={i} onClick={() => setActive(g.sourceIds)}>{g.text} {g.conf && <span className={'cf ' + g.conf.level}>{g.conf.level}</span>}</div>)}
               {lv(k === 'r' ? 'red' : 'amber').length === 0 && <div>Nothing listed in the document.</div>}</div>)}</div>
         </div><div className="sticky">
           <div className="paper"><h3>The hospital's original words</h3><Doc text={text} ranges={ranges} /></div>

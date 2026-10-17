@@ -4,8 +4,8 @@ import { validateAnalysisRequest } from '../../../lib/validation';
 export const maxDuration = 60;
 export async function POST(req) {
   try {
-    const { sampleId, text, lang } = validateAnalysisRequest(await req.json());
-    const sample = samples.find(s => s.id === sampleId) || { id: 'custom', allergies: [], homeMeds: [] };
+    const { sampleId, text, lang, profile } = validateAnalysisRequest(await req.json());
+    const sample = samples.find(s => s.id === sampleId) || { id: 'custom', allergies: profile?.allergies || [], homeMeds: profile?.homeMeds || [] };
     return Response.json(await analyze({ sample, text: text || sample.summary, lang }));
   } catch (e) {
     const status = e.status || 500;
