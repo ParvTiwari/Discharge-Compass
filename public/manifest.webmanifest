@@ -1,0 +1,13 @@
+{
+  "name": "Discharge Compass",
+  "short_name": "Compass",
+  "description": "Verified discharge plans that can be saved for offline access.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f8fc",
+  "theme_color": "#0d9488",
+  "icons": [
+    { "src": "/compass-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/compass-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
